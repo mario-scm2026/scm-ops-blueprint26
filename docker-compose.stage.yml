@@ -1,22 +1,40 @@
-version: '3.8'
-
 services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: scm_user
+      POSTGRES_PASSWORD: ${STAGE_DB_PASSWORD:-scm_password_stage}
+      POSTGRES_DB: scm_db_stage
+    volumes:
+      - postgres_data_stage:/var/lib/postgresql/data
+    networks:
+      - scm-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scm_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   backend:
-    image: ${DOCKERHUB_USERNAME}/scm-backend:${VERSION:-latest}
+    image: ${DOCKERHUB_USERNAME:-midelivery}/scm-backend:${VERSION:-latest}
     ports:
       - "3001:3000"
     environment:
       - NODE_ENV=stage
       - PORT=3000
-      - APP_VERSION=${VERSION:-0.1.0}
+      - APP_VERSION=${VERSION:-0.2.0}
+      - DATABASE_URL=postgresql://scm_user:${STAGE_DB_PASSWORD:-scm_password_stage}@postgres:5432/scm_db_stage
       - FEATURE_NEW_UI=false
       - FEATURE_DEBUG=false
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: always
     networks:
       - scm-network
 
   frontend:
-    image: ${DOCKERHUB_USERNAME}/scm-frontend:${VERSION:-latest}
+    image: ${DOCKERHUB_USERNAME:-midelivery}/scm-frontend:${VERSION:-latest}
     ports:
       - "8081:80"
     environment:
@@ -26,6 +44,20 @@ services:
     restart: always
     networks:
       - scm-network
+
+  flyway:
+    image: flyway/flyway:latest
+    command: -url=jdbc:postgresql://postgres:5432/scm_db_stage -user=scm_user -password=${STAGE_DB_PASSWORD:-scm_password_stage} migrate
+    volumes:
+      - ./db/migrations:/flyway/sql
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - scm-network
+
+volumes:
+  postgres_data_stage:
 
 networks:
   scm-network:

@@ -1,4 +1,22 @@
 services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: scm_user
+      POSTGRES_PASSWORD: scm_password
+      POSTGRES_DB: scm_db_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data
+    networks:
+      - scm-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scm_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   backend:
     build: ./backend
     ports:
@@ -6,12 +24,16 @@ services:
     environment:
       - NODE_ENV=development
       - PORT=3000
-      - APP_VERSION=0.1.0
+      - APP_VERSION=0.2.0
+      - DATABASE_URL=postgresql://scm_user:scm_password@postgres:5432/scm_db_dev
       - FEATURE_NEW_UI=false
       - FEATURE_DEBUG=false
     volumes:
       - ./backend:/app
       - /app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
     command: npm run dev
     networks:
       - scm-network
@@ -26,6 +48,21 @@ services:
       - backend
     networks:
       - scm-network
+
+  # Flyway para migraciones
+  flyway:
+    image: flyway/flyway:latest
+    command: -url=jdbc:postgresql://postgres:5432/scm_db_dev -user=scm_user -password=scm_password migrate
+    volumes:
+      - ./db/migrations:/flyway/sql
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - scm-network
+
+volumes:
+  postgres_data_dev:
 
 networks:
   scm-network:
