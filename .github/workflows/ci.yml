@@ -1,0 +1,134 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+  BACKEND_IMAGE: scm-backend
+  FRONTEND_IMAGE: scm-frontend
+
+jobs:
+  # Job 1: Lint y pruebas básicas
+  lint-and-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+    
+    - name: Backend - Install dependencies
+      working-directory: ./backend
+      run: npm install
+    
+    - name: Backend - Lint (placeholder)
+      working-directory: ./backend
+      run: echo "✅ Linting passed - No linter configured yet"
+    
+    - name: Backend - Tests (placeholder)
+      working-directory: ./backend
+      run: echo "✅ Tests passed - No tests configured yet"
+    
+    - name: Frontend - Install dependencies
+      working-directory: ./frontend
+      run: npm install
+    
+    - name: Frontend - Build
+      working-directory: ./frontend
+      run: npm run build
+    
+    - name: Frontend - Tests (placeholder)
+      working-directory: ./frontend
+      run: echo "✅ Tests passed - No tests configured yet"
+
+  # Job 2: Security scan - verificar que no hay secretos en el código
+  security-scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Check for secrets in code
+      run: |
+        echo "🔍 Scanning for potential secrets..."
+        if grep -r "password\|secret\|token\|key" --include="*.js" --include="*.json" --include="*.env" --exclude-dir=node_modules --exclude="*.test.js" . | grep -v "example\|placeholder\|TODO"; then
+          echo "⚠️ WARNING: Possible secrets found in code!"
+          echo "Please review the following files:"
+          grep -r "password\|secret\|token\|key" --include="*.js" --include="*.json" --include="*.env" --exclude-dir=node_modules --exclude="*.test.js" . | grep -v "example\|placeholder\|TODO"
+          exit 1
+        else
+          echo "✅ No obvious secrets found in code"
+        fi
+    
+    - name: Check .gitignore for env files
+      run: |
+        if grep -q ".env" .gitignore; then
+          echo "✅ .env files are properly ignored"
+        else
+          echo "⚠️ .env not in .gitignore"
+          exit 1
+        fi
+
+  # Job 3: Build Docker images (solo en push a main)
+  build-and-push:
+    runs-on: ubuntu-latest
+    needs: [lint-and-test, security-scan]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Login to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+    
+    - name: Generate version
+      id: version
+      run: |
+        COMMIT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+        VERSION="v0.1.0-${COMMIT_SHA}"
+        echo "version=${VERSION}" >> $GITHUB_OUTPUT
+        echo "Generated version: ${VERSION}"
+    
+    - name: Build and push Backend
+      uses: docker/build-push-action@v5
+      with:
+        context: ./backend
+        push: true
+        tags: |
+          ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.BACKEND_IMAGE }}:${{ steps.version.outputs.version }}
+          ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.BACKEND_IMAGE }}:latest
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+    
+    - name: Build and push Frontend
+      uses: docker/build-push-action@v5
+      with:
+        context: ./frontend
+        push: true
+        tags: |
+          ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.FRONTEND_IMAGE }}:${{ steps.version.outputs.version }}
+          ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.FRONTEND_IMAGE }}:latest
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+    
+    - name: Output image info
+      run: |
+        echo "✅ Images built and pushed successfully!"
+        echo "Backend: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.BACKEND_IMAGE }}:${{ steps.version.outputs.version }}"
+        echo "Frontend: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.FRONTEND_IMAGE }}:${{ steps.version.outputs.version }}"
